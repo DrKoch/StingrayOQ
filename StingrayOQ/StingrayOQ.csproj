@@ -33,7 +33,7 @@
   <ItemGroup>
     <Reference Include="Krs.Ats.IBNet96">
       <HintPath>..\krs.ats.ibnet\krsatsibnet-96313\Krs.Ats.IBNet\bin\Debug\Krs.Ats.IBNet96.dll</HintPath>
-      <Private>False</Private>
+      <Private>True</Private>
     </Reference>
     <Reference Include="OpenQuant.API">
       <HintPath>C:\Program Files\SmartQuant Ltd\OpenQuant\Bin\OpenQuant.API.dll</HintPath>

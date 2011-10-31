@@ -19,6 +19,33 @@ It has these features:
 I started this project because I needed a robust plugin for several accounts (within an FAstructure) at IB.
 I created very similar plugins for WealthLab 4 (http://wl4.wealth-lab.com) and RightEdge (www.rightedgesystems.com) before.
 
+Using StingrayOQ
+================
+To use StingrayOQ you need just two files:
+
+StingrayOQ.dll
+Krs.Ats.IBNet96.dll
+
+copy these files into the OpenQuant bin folder (typically C:\Program Files\SmartQuant Ltd\OpenQuant\Bin)
+
+In OpenQuant go to Tools->Options->Configuration->Providers->User
+Click "Add" and choose StingrayOQ.dll
+
+Then go to Tools->Options->Configuration->Modes
+In the field "Live->Execution Provider" choose StingrayOQ
+
+
+Build form sources
+==================
+
+To build the StingrayOQ project you'll need to set two references:
+
+OpenQuant.API should refer to OpenQuant.API.DLL in <SmartQuantInstallDir>\OpenQuant\Bin, typically C:\Program Files\SmartQuant Ltd\OpenQuant\Bin
+Krs.Ats.IBNet96 should refer to Krs.Ats.IBNet96.DLL 
+
+You may get this DLL from Dinosaur Technology and Trading (http://www.dinosaurtech.com)
+
+
 
 
  

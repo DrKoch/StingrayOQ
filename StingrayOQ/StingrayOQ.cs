@@ -695,6 +695,7 @@ DefaultValue(LogDestination.File)]
 				EmitError("Not connected.");
 				return;
 			}
+            // TODO: TryParse
 		    int orderId = int.Parse(order.OrderID);
             ibclient.CancelOrder(orderId);
 		}
