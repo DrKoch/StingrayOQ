@@ -43,7 +43,8 @@ To build the StingrayOQ project you'll need to set two references:
 OpenQuant.API should refer to OpenQuant.API.DLL in <SmartQuantInstallDir>\OpenQuant\Bin, typically C:\Program Files\SmartQuant Ltd\OpenQuant\Bin
 Krs.Ats.IBNet96 should refer to Krs.Ats.IBNet96.DLL 
 
-You may get this DLL from Dinosaur Technology and Trading (http://www.dinosaurtech.com)
+You may get this DLL from Dinosaur Technology and Trading (http://www.dinosaurtech.com) or http://code.google.com/p/ib-csharp
+
 
 
 
