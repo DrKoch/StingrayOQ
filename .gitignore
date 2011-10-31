@@ -1,0 +1,4 @@
+# git should ignore these #
+###########################
+_Resharper.*
+krs.ats.ibnet
