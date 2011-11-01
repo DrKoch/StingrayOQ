@@ -45,6 +45,7 @@ Krs.Ats.IBNet96 should refer to Krs.Ats.IBNet96.DLL
 
 You may get this DLL from Dinosaur Technology and Trading (http://www.dinosaurtech.com) or http://code.google.com/p/ib-csharp
 
+Details about UserProviders for OpenQuant:  "Gow to develop a custom market data or execution provider" www.smartquant.com/forums/viewtopic.php?t=6561
 
 
 
