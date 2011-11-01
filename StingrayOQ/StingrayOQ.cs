@@ -390,7 +390,12 @@ DefaultValue(LogDestination.File)]
 		#region OpenQuant: Orders 
 	    protected override void Send(OQ.Order order)
 	    {
-	        if (!CheckTWS()) return;
+            Send2(order);
+	    }
+
+        private void Send2(OQ.Order order, double newQty = double.NaN, double newPrice = double.NaN, double newStopPrice = double.NaN)
+        {
+            if (!CheckTWS()) return;
 
 	        if (!IsConnected)
 	        {
@@ -428,7 +433,8 @@ DefaultValue(LogDestination.File)]
 	            return;
 	        }
 	        iborder.Action = ibaction;
-	        iborder.AuxPrice = (decimal) order.StopPrice; // stop orders only
+            if (!double.IsNaN(newStopPrice)) iborder.AuxPrice = (decimal) newStopPrice;
+            else iborder.AuxPrice = (decimal)order.StopPrice; // stop orders only
 	        iborder.ClientId = ClientId;
             
 	        IB.FinancialAdvisorAllocationMethod faMethod;
@@ -463,8 +469,8 @@ DefaultValue(LogDestination.File)]
 	        // iborder.GoodAfterTime = order.StrategyPrice??
 		    // iborder.GoodTillDate = order.ExpireTime;
             iborder.Hidden = order.IB.Hidden;
-            info("order.Price=" + order.Price);
-		    iborder.LimitPrice = (decimal)order.Price;
+            if (!double.IsNaN(newPrice)) iborder.LimitPrice = (decimal)newPrice;
+		    else iborder.LimitPrice = (decimal)order.Price;
             // iborder.MinQty
             // iborder.NbboPriceCap
             // = order.IB.DisplaySize;
@@ -496,7 +502,8 @@ DefaultValue(LogDestination.File)]
                 return;
             }
 	        iborder.Tif = ibtif;
-		    iborder.TotalQuantity = (int)Math.Round(order.Qty);
+            if (!double.IsNaN(newQty)) iborder.TotalQuantity = (int) Math.Round(newQty);
+		    else iborder.TotalQuantity = (int)Math.Round(order.Qty);
             // iborder.TrailStopPrice = order.???
 		    iborder.Transmit = AutoTransmit;
             // iborder.TriggerMethod
@@ -583,10 +590,6 @@ DefaultValue(LogDestination.File)]
 
         protected override void Replace(OQ.Order order, double newQty, double newPrice, double newStopPrice)
         {
-            // Debug
-            EmitReplaceReject(order, OQ.OrderStatus.Rejected, "not implemented yet");
-            return;
-
             if (!CheckTWS()) return;
             if (!IsConnected)
             {
@@ -596,13 +599,10 @@ DefaultValue(LogDestination.File)]
             string oldID = order.OrderID;
             Cancel(order);
             // order will get a new orderId, remove it from List
+            // Todo: Track old order, possible fills etc. until actually cancelled
             workingOrders.Remove(order.OrderID);
-            EmitPendingReplace(order);
-            order.Qty = newQty;
-            // this does not change the order price ????
-            order.Price = newPrice;
-            order.StopPrice = newStopPrice;                        
-            Send(order);            
+            EmitPendingReplace(order);                     
+            Send2(order, newQty, newPrice, newStopPrice);            
             info("Replace: old ID=" + oldID + " -> new ID=" + order.OrderID + ", newPrice=" + order.Price);
         }
 		#endregion
