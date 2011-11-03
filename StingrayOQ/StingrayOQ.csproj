@@ -54,6 +54,7 @@
     <Compile Include="SrBrokerOrder.cs" />
     <Compile Include="SrBrokerPosition.cs" />
     <Compile Include="SrOrder.cs" />
+    <Compile Include="SrOrderInfo.cs" />
     <Compile Include="StingrayOQ.cs" />
   </ItemGroup>
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />

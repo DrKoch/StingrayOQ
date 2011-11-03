@@ -25,27 +25,14 @@ using IB = Krs.Ats.IBNet96;
 
 using OQ = OpenQuant.API;
 using OpenQuant.API.Plugins;
+using OrderStatus = Krs.Ats.IBNet96.OrderStatus;
 
 namespace finantic.OQPlugins
 {
 	public class StingrayOQ : UserProvider
     {
-        #region Constants
-        const string svnRevision = "$Rev: 30 $";
-        const string svnDate = "$Date: 2011-10-30 10:46:08 +0100 (Sun, 30 Oct 2011) $";
-        const string svnId = "$Id: Stingray.cs 30 2011-10-30 09:46:08Z rene $";
-        #endregion // const
-
         #region private variables
-        // Class members
-
-		private bool ordersLoggedIn;
-
-		private Dictionary<string, Instrument> subscribedInstruments;
-
-		private Dictionary<string, SrBrokerOrder> pendingOrders;
-		private Dictionary<string, OQ.Order> workingOrders;
-
+ 
         // IBClient
         IBClient ibclient;
 
@@ -75,13 +62,20 @@ namespace finantic.OQPlugins
         DateTime latestExecution = DateTime.MinValue;
         int numNewExecutions = 0;
 
-        // Stingray Threadsave Monitor
-        // this data needs a lock(private_lock) -----------------------------------
+        // Stingray Threadsave Monitor -----------------------------------------------------------------------------
+        // this data needs a lock(private_lock)
 	    private bool isFAAccount = true;
+
+        // Broker Info, cached information, returned by GetBrokerInfo()
 	    private DataTable accountDetails;
         Dictionary<string, double> activeAccounts = new Dictionary<string, double>();
+        Dictionary<string, SrBrokerPosition> openPositions = new Dictionary<string, SrBrokerPosition>();
+        private Dictionary<string, SrBrokerOrder> pendingOrders;
 
-        Dictionary<string, SrBrokerPosition> openPositions = new Dictionary<string, SrBrokerPosition>();                       
+        // internal state
+        private Dictionary<string, SrOrderInfo> workingOrders;
+
+        
         // end threadsave Monitor -------------------------------------------------
 
         // OpenQuant State
@@ -115,12 +109,8 @@ namespace finantic.OQPlugins
 
             accountDetails.PrimaryKey = primaryKey;
 
-			ordersLoggedIn = false;
-
-			subscribedInstruments = new Dictionary<string, Instrument>();
-
 			pendingOrders = new Dictionary<string, SrBrokerOrder>();
-			workingOrders = new Dictionary<string, OQ.Order>();
+			workingOrders = new Dictionary<string, SrOrderInfo>();
 
             watchdog.Tick += new EventHandler(watchdog_Tick);
             watchdog.Interval = 1000;
@@ -387,7 +377,7 @@ DefaultValue(LogDestination.File)]
 
 		#endregion
 
-		#region OpenQuant: Orders 
+		#region OpenQuant: Orders  Send, Replace, Cancel
 	    protected override void Send(OQ.Order order)
 	    {
             Send2(order);
@@ -572,7 +562,7 @@ DefaultValue(LogDestination.File)]
             order.OrderID = iborder.OrderId.ToString();
             order.ClientID = iborder.ClientId.ToString();
             // Remember active orders
-	        workingOrders[iborder.OrderId.ToString()] = order;
+	        workingOrders[iborder.OrderId.ToString()] = new SrOrderInfo(order);
 		}
 
 		protected override void Cancel(OQ.Order order)
@@ -588,23 +578,46 @@ DefaultValue(LogDestination.File)]
             ibclient.CancelOrder(orderId);
 		}
 
+        /// <summary>
+        /// there is no Replace method available with the IB API so we do a cancel followed by a new Send
+        /// all sorts of things may happen between the cancel and the send, so let's do this carefully.
+        /// </summary>
+        /// <param name="order"></param>
+        /// <param name="newQty"></param>
+        /// <param name="newPrice"></param>
+        /// <param name="newStopPrice"></param>
         protected override void Replace(OQ.Order order, double newQty, double newPrice, double newStopPrice)
         {
+            tStart("Replace OrderID=" + order.OrderID);
             if (!CheckTWS()) return;
             if (!IsConnected)
             {
                 EmitError("Not connected.");
                 return;
             }
-            string oldID = order.OrderID;
+            if (!workingOrders.ContainsKey(order.OrderID))
+            {
+                error("order not found");
+                EmitReplaceReject(order, OQ.OrderStatus.Rejected, "unknown order");
+            }
+            // check if newQty is still possible
+            if (order.CumQty > newQty)
+            {
+                EmitReplaceReject(order, OQ.OrderStatus.Rejected,
+                                  "can't change quantity below number of already filled shares");
+                return;
+            }
+            EmitPendingReplace(order);
+            // add to list of orders tracked through the replace states
+            workingOrders[order.OrderID].state = SrOrderInfoState.ReplaceCancel;
+            workingOrders[order.OrderID].newQty = newQty;
+            workingOrders[order.OrderID].newPrice = newPrice;
+            workingOrders[order.OrderID].newStopPrice = newStopPrice;
+            // 1. Cancel Order
             Cancel(order);
-            // order will get a new orderId, remove it from List
-            // Todo: Track old order, possible fills etc. until actually cancelled
-            workingOrders.Remove(order.OrderID);
-            EmitPendingReplace(order);                     
-            Send2(order, newQty, newPrice, newStopPrice);            
-            info("Replace: old ID=" + oldID + " -> new ID=" + order.OrderID + ", newPrice=" + order.Price);
+            tEnd("Replace OrderID=" + order.OrderID);
         }
+
 		#endregion
 
 		#region OpenQuant: GetBrokerInfo
@@ -661,6 +674,7 @@ DefaultValue(LogDestination.File)]
                     foreach(SrBrokerPosition brpos in openPositions.Values)
                     {
                         if (brpos.Fields["Account"] != acctName) continue;
+                        if ((int)Math.Round(brpos.Qty) == 0) continue; // no longer exists
                         BrokerPosition pos = oqAccount.AddPosition();
                         numOpenPositions++;
                         pos.Currency = brpos.Currency;
@@ -1067,247 +1081,71 @@ DefaultValue(LogDestination.File)]
 
         void ibclient_OrderStatus(object sender, OrderStatusEventArgs e)
         {
-            tStart("ibclient_OrderStatus()");
-            if (true /*pluginIsBroker*/)
+            try
             {
-                // DEBUG
-                LoggerLevel llevel = LoggerLevel.Information;
-                if (true /*e.Status == OrderStatus.Submitted*/) llevel = LoggerLevel.Error;
-                logger.AddLog(llevel, "ibclient_OrderStatus: received from TWS "
-                    + " ID: " + e.OrderId.ToString()
-                    + ", ClientID: " + e.ClientId.ToString()
-                    + ", Filled: " + e.Filled.ToString()
-                    + ", Remaining: " + e.Remaining
-                    + ", Status: " + e.Status);
-               
-                bool request = false;
-                lock (private_lock)
-                {
-                    if (DateTime.Now > lastPortfolioUpdate + TimeSpan.FromMinutes(3.0))
-                    {
-                        request = true;
-                    }
-                }
-                // DEBUG: switch off
-                //if (request && ibclient != null && ibclient.Connected)
-                //{
-                //    logger.AddLog(LoggerLevel.Information,
-                //        "** PortfolioUpdate older than 3 Mins ("
-                //        + lastPortfolioUpdate.ToString("T")
-                //        + "), request new ***");
-                //    RequestAccountUpdates();
-
-                //    //lastPortfolioUpdate = DateTime.Now;
-                //}
+                ibclient_OrderStatus2(sender, e);
             }
+            catch (Exception ex)
+            {
+                error("ibclient_OrderStatus: Exception: " + ex.Message + Environment.NewLine + ex.StackTrace);
+            }
+        }
+
+	    void ibclient_OrderStatus2(object sender, OrderStatusEventArgs e)
+        {
+           tStart("ibclient_OrderStatus()");
+            logger.AddLog(LoggerLevel.Information,
+                "ibclient_OrderStatus: received from TWS "
+                + " ID: " + e.OrderId.ToString()
+                + ", ClientID: " + e.ClientId.ToString()
+                + ", Filled: " + e.Filled.ToString()
+                + ", Remaining: " + e.Remaining
+                + ", Status: " + e.Status);
+
+            if (e.ClientId != clientId)
+            {
+                error("OrderStatus: Client Id mismatch: " + e.ClientId.ToString());
+                tEnd("ibclient_OrderStatus() bad clientId");
+                return;
+            }
+                          
             string orderId = e.OrderId.ToString();
-
-            OQ.Order oqorder = null;
-            lock (private_lock)
-            {
-                // find matching order
-                if (!workingOrders.ContainsKey(orderId))
-                {
-                    info("ibclient_OrderStatus: unknown order: " + e.OrderId.ToString());
-                    
-                    tEnd("ibclient_OrderStatus()  unknown order");
-                    return;
-                }
-                // srorder = openOrders[e.OrderId.ToString()];
-                oqorder = workingOrders[orderId];
-            }
- 
-            lock (private_lock)
-            {
-                if (e.ClientId != clientId)
-                {
-                    error("OrderStatus: Client Id mismatch: " + e.ClientId.ToString());
-                    tEnd("ibclient_OrderStatus()");
-                    return;
-                }
-            } 
-            info("Status of oqorder ID " + oqorder.OrderID + " is " + oqorder.Status);
-
-            switch(e.Status)
+            switch (e.Status)
             {
                 case IB.OrderStatus.ApiCancelled:
                 case IB.OrderStatus.Canceled:
-                    if(!oqorder.IsPendingReplace) EmitCancelled(oqorder);
-                    break;
+                     OnOrderCanceled(orderId);
+                     break;
                 case IB.OrderStatus.ApiPending:
+                case IB.OrderStatus.PreSubmitted:
                 case IB.OrderStatus.PendingSubmit:
                 case IB.OrderStatus.Submitted:
-                    if(oqorder.IsPendingReplace) EmitReplaced(oqorder);
-                    if (oqorder.IsPendingNew) EmitAccepted(oqorder);
-                    if(e.Filled > 0)
-                    {
-                        ReportFill(oqorder, e.Filled, e.Remaining, (double)e.LastFillPrice);
-                    }
-                    break;
                 case IB.OrderStatus.Filled:
                 case IB.OrderStatus.PartiallyFilled:
-                    if (oqorder.IsPendingReplace) EmitReplaced(oqorder);
-                    if (oqorder.IsPendingNew) EmitAccepted(oqorder);
-                    ReportFill(oqorder, e.Filled, e.Remaining, (double) e.LastFillPrice);                     
+                    bool sendAccepted = false;
+                    lock(private_lock)
+                    {
+                        if (workingOrders.ContainsKey(orderId) &&
+                            workingOrders[orderId].state == SrOrderInfoState.New) 
+                                sendAccepted = true;                                               
+                    }
+                    if(sendAccepted) OnOrderAccepted(orderId);
+                    if (e.Filled > 0)
+                    {
+                        bool completely_filled = e.Status == IB.OrderStatus.Filled;
+                        OnOrderFilled(orderId, e.Filled, e.Remaining, (double)e.LastFillPrice, completely_filled);                        
+                    }
                     break;
                 case IB.OrderStatus.PendingCancel:
-                    EmitPendingCancel(oqorder);
+                    OnOrderPendingCancel(orderId);
                     break;
                 default:
                 case IB.OrderStatus.Unknown:
                 case IB.OrderStatus.None:
                 case IB.OrderStatus.Inactive:
-                    // ignore
-                    return;
-            }
-            //try
-            //{
-           //    string information;
-
-            //    information = "ID: " + orderId;
-            //    if (reorder != null)
-            //    {
-            //        if (reorder.OrderSymbol != null)
-            //        {
-            //            information += ", " + reorder.OrderSymbol.Name;
-            //        }
-            //        else
-            //        {
-            //            information += ", Symbol==<null>";
-            //        }
-            //    }
-            //    else
-            //    {
-            //        information += ", <null>";
-            //    }
-            //    information += ", Status: " + e.Status.ToString();
-            //    switch (e.Status)
-            //    {
-            //        case OrderStatus.Inactive:
-            //        // order is rejected by TWS
-            //        // example: Margin requirements
-            //        // RE does not understand "BrokerOrderState.Invalid"
-            //        // we have to cancel this order in RE
-            //        // fall through to Cancel
-            //        case OrderStatus.Canceled:
-            //        case OrderStatus.ApiCancelled:
-            //            reorder.OrderState = BrokerOrderState.Cancelled;
-            //            lock (private_lock)
-            //            {
-            //                if (openOrders.ContainsKey(orderId))
-            //                {
-            //                    openOrders[orderId].reorder.OrderState = BrokerOrderState.Cancelled;
-            //                    openOrders.Remove(orderId);
-            //                }
-            //            }
-            //            break;
-            //        case OrderStatus.Filled:
-            //            reorder.OrderState = BrokerOrderState.Filled;
-            //            srorder.acknowledged = true;
-            //            break;
-            //        case OrderStatus.PendingCancel:
-            //            reorder.OrderState = BrokerOrderState.PendingCancel;
-            //            // probably already filled
-            //            break;
-            //        case OrderStatus.PendingSubmit:
-            //        case OrderStatus.ApiPending:
-            //            // probably already filled
-            //            break;
-            //        case OrderStatus.PreSubmitted:
-            //            // no matching RE status
-            //            return;
-            //        case OrderStatus.Submitted:
-            //            // update acknowledge
-            //            srorder.SubmittedDate = DateTime.Now;
-            //            srorder.acknowledged = true;
-            //            reorder.OrderState = BrokerOrderState.Submitted;
-            //            reorder.SubmittedDate = DateTime.Now
-            //                + TimeSpan.FromHours(settings.BarTimeStampCorrection); // Timezone
-            //            logger.AddLog(LoggerLevel.Error, "ibclient_OrderStatus: Acknowledged! "
-            //                + " ID: " + e.OrderId.ToString());
-            //            break;
-            //        case OrderStatus.None:
-            //        case OrderStatus.Unknown:
-            //        default:
-            //            error("Unknown OrderStatus " + e.Status.ToString());
-            //            return;
-            //    }
-
-            //    if (reorder.OrderSymbol == null) return;
-
-            //    // check available fills
-            //    long alreadyFilled = CheckFill(reorder);
-
-            //    // Is this a new fill?
-            //    if (e.Status == OrderStatus.Filled
-            //        || e.Status == OrderStatus.Submitted
-            //        || e.Status == OrderStatus.PendingSubmit
-            //        || e.Status == OrderStatus.ApiPending
-            //        || e.Status == OrderStatus.PendingCancel)
-            //    {
-            //        if (alreadyFilled == e.Filled)
-            //        {
-            //            // Console.WriteLine("Order " + e.OrderId + " known Fill -> IGNORED");
-            //            tEnd("ibclient_OrderStatus()  known fill");
-            //            return;
-            //        }
-            //    }
-            //    // new fill
-            //    Fill fill = new Fill();
-            //    fill.FillDateTime = DateTime.Now
-            //        + TimeSpan.FromHours(settings.BarTimeStampCorrection); // Timezone
-            //    if (e.Filled > alreadyFilled)
-            //    {
-            //        Price p = new Price((double)e.LastFillPrice, (double)e.LastFillPrice);
-            //        fill.Price = p;
-            //        fill.Commission = 0.0;
-            //        fill.Quantity = e.Filled - alreadyFilled;
-            //        reorder.Fills.Add(fill);
-            //    }
-
-            //    if (true /*e.Status == OrderStatus.Filled*/)
-            //    {
-            //        // The price of the trade converted to the account currency, using the
-            //        // current exchange rate at the time the trade took place. 
-            //        // fill.Price.AccountPrice = ??
-            //        // The price of the trade in the symbol's native currency. 
-            //        information += ", FillPrice: " + e.AverageFillPrice.ToString();
-            //        information += ", Filled: " + e.Filled.ToString();
-
-            //        // fill.Commission // ???
-            //        if (e.LastFillPrice != e.AverageFillPrice)
-            //        {
-            //            information += ", lastFillPrice: " + e.LastFillPrice.ToString();
-            //        }
-            //        if (e.Remaining != 0)
-            //        {
-            //            information += ", remaining: " + e.Remaining.ToString();
-            //        }
-            //        alreadyFilled = CheckFill(reorder);
-            //        if (alreadyFilled != e.Filled)
-            //        {
-            //            Console.Error.WriteLine("Fill Error: alreadyFilled = "
-            //            + alreadyFilled.ToString()
-            //            + " != e.Filled = " + e.Filled.ToString());
-            //        }
-            //    }
-            //    if (e.WhyHeld != null && e.WhyHeld.Trim() != "")
-            //    {
-            //        information += ", WhyHeld: '" + e.WhyHeld + "'";
-            //    }
-            //    logger.AddLog(LoggerLevel.Information, "OrderUpdate: " + information);
-            //    if (reorder.OrderSymbol != null)
-            //    {
-            //        SendOrderUpdate(reorder, alreadyFilled, fill, information);
-            //    }
-            //}
-            //catch (Exception ex)
-            //{
-            //    MessageBox.Show("ibclient_OrderStatus: Exception: "
-            //    + ex.Message + "\r\n" + ex.StackTrace);
-            //    tEnd("ibclient_OrderStatus() Exception");
-            //    return;
-            //}
+                    OnOrderError(orderId, "unexpected order status " + e.Status.ToString());
+                    break;
+            }            
             tEnd("ibclient_OrderStatus()");
         }
 
@@ -1332,17 +1170,15 @@ DefaultValue(LogDestination.File)]
                 lastPortfolioUpdate = DateTime.Now;
                 ts = lastPortfolioUpdate.ToString("T");
             }
-            // positions: number shares, prices, PnL
-            // DEBUG was .Information
-            logger.AddLog(LoggerLevel.Error, "UpdatePortfolio (timestamp="
+            // positions: number shares, prices, PnL 
+            logger.AddLog(LoggerLevel.Information,
+                "UpdatePortfolio (timestamp="
                 + ts
                 + "): "
                 + e.Contract.Symbol + "/" + e.Contract.Currency + ": "
                 + " Pos: " + e.Position.ToString()
                 + "@" + e.MarketPrice.ToString("N4")
                 + ", PnL: " + e.UnrealizedPnl.ToString());
-
-            //return;
 
             string symbol = e.Contract.Symbol;
             if (symbol == null) return;
@@ -1416,174 +1252,89 @@ DefaultValue(LogDestination.File)]
 	    void ibclient_OpenOrder2(object sender0, OpenOrderEventArgs e)
         {
             SrBrokerOrder oqorder;
-            tStart("ibclient_OpenOrder(): "
+	        tStart("ibclient_OpenOrder");
+            logger.AddLog(LoggerLevel.Information,
+                "ibclient_OpenOrder(): "
                 + "Order from TWS: id: " + e.OrderId
                 + ", " + e.Contract.Symbol
                 + ", Status: " + e.OrderState.Status.ToString()
                 + ", Shares: " + e.Order.TotalQuantity.ToString());
 
+        // TODO: if order already there, just update status, qty, etc
+
+            oqorder = new SrBrokerOrder();
+            oqorder.Symbol = e.Contract.Symbol;
+            oqorder.Currency = e.Contract.Currency;
+            oqorder.Exchange = e.Contract.Exchange;
+            if (!SecurityTypeToInstrumentType(e.Contract.SecurityType, out oqorder.InstrumentType))
+            {
+                error("unknown security type in Order " + oqorder.Symbol);
+                return;
+            }
+            oqorder.OrderId = e.OrderId.ToString();
+            oqorder.Price = (double) e.Order.LimitPrice;
+            oqorder.Qty = e.Order.TotalQuantity;
+            if (!ActionSideToOrderSide(e.Order.Action, out oqorder.Side))
+            {
+                error("unknown action side in Order " + oqorder.Symbol);
+            }
+            if(!OrderStateToOrderStatus(e.OrderState.Status, out oqorder.Status))
+            {
+                error("unknown status in Order " + oqorder.Symbol);
+                return;
+            }
+            oqorder.StopPrice = (double)e.Order.AuxPrice; // stop order only
+                
+            if(!OrderTypeToOrderType(e.Order.OrderType, out oqorder.Type))
+            {
+                error("bad order type in Order " + oqorder.Symbol);
+            }              
+            oqorder.OrderId = e.OrderId.ToString();
+            // Fields
+            oqorder.AddCustomField("ContractId", e.Contract.ContractId.ToString());
+            oqorder.AddCustomField("Multiplier", e.Contract.Multiplier);
+            oqorder.AddCustomField("Account", e.Order.Account);
+            oqorder.AddCustomField("ClientId", e.Order.ClientId.ToString());
+            oqorder.AddCustomField("DiscretionaryAmt", e.Order.DiscretionaryAmt.ToString());
+            oqorder.AddCustomField("DisplaySize", e.Order.DisplaySize.ToString());
+            oqorder.AddCustomField("ETradeOnly", e.Order.ETradeOnly.ToString());
+            oqorder.AddCustomField("GoodAfterTime", e.Order.GoodAfterTime);
+            oqorder.AddCustomField("GoodTillDate", e.Order.GoodTillDate);
+            oqorder.AddCustomField("Hidden", e.Order.Hidden.ToString());
+            oqorder.AddCustomField("NbboPriceCap", e.Order.NbboPriceCap.ToString());                
+            if (!string.IsNullOrWhiteSpace(e.Order.OcaGroup))
+            {
+                oqorder.AddCustomField("OcaGroup", e.Order.OcaGroup);
+                oqorder.AddCustomField("OcaType", e.Order.OcaType.ToString());
+            }
+            oqorder.AddCustomField("OrderRef", e.Order.OrderRef);
+            oqorder.AddCustomField("Origin", e.Order.Origin.ToString());
+            oqorder.AddCustomField("OutsideRth", e.Order.OutsideRth.ToString());
+            oqorder.AddCustomField("OverridePercentageConstraints", e.Order.OverridePercentageConstraints.ToString());
+            oqorder.AddCustomField("ParentId", e.Order.ParentId.ToString());
+            oqorder.AddCustomField("PercentOffset", e.Order.PercentOffset.ToString());
+            oqorder.AddCustomField("PermId", e.Order.PermId.ToString());
+            oqorder.AddCustomField("ReferencePriceType", e.Order.ReferencePriceType.ToString());
+            oqorder.AddCustomField("Rule80A", e.Order.Rule80A.ToString());
+            //oqorder.AddCustomField("ScaleInitLevelSize", e.Order.ScaleInitLevelSize.ToString());
+            //oqorder.AddCustomField("ScalePriceIncrement", e.Order.ScalePriceIncrement.ToString());
+            //oqorder.AddCustomField("ScaleSubsLevelSize", e.Order.ScaleSubsLevelSize.ToString());
+            oqorder.AddCustomField("SettlingFirm", e.Order.SettlingFirm);
+            oqorder.AddCustomField("StartingPrice", e.Order.StartingPrice.ToString());
+            oqorder.AddCustomField("StockRangeLower", e.Order.StockRangeLower.ToString());
+            oqorder.AddCustomField("StockRangeUpper", e.Order.StockRangeUpper.ToString());
+            oqorder.AddCustomField("StockRefPrice", e.Order.StockRefPrice.ToString());
+            oqorder.AddCustomField("SweepToFill", e.Order.SweepToFill.ToString());
+            oqorder.AddCustomField("Tif", e.Order.Tif.ToString());
+            oqorder.AddCustomField("TrailStopPrice", e.Order.TrailStopPrice.ToString());
+            oqorder.AddCustomField("TriggerMethod", e.Order.TriggerMethod.ToString());
+            oqorder.AddCustomField("WhatIf", e.Order.WhatIf.ToString());
+
+            string key = oqorder.OrderId;
             lock (private_lock)
             {
-                 //    lastOpenOrderUpdate = DateTime.Now;
-                oqorder = new SrBrokerOrder();
-                oqorder.Symbol = e.Contract.Symbol;
-                oqorder.Currency = e.Contract.Currency;
-                oqorder.Exchange = e.Contract.Exchange;
-                if (!SecurityTypeToInstrumentType(e.Contract.SecurityType, out oqorder.InstrumentType))
-                {
-                    error("unknown security type in Order " + oqorder.Symbol);
-                    return;
-                }
-                oqorder.OrderId = e.OrderId.ToString();
-                oqorder.Price = (double) e.Order.LimitPrice;
-                oqorder.Qty = e.Order.TotalQuantity;
-                if (!ActionSideToOrderSide(e.Order.Action, out oqorder.Side))
-                {
-                    error("unknown action side in Order " + oqorder.Symbol);
-                }
-                if(!OrderStateToOrderStatus(e.OrderState.Status, out oqorder.Status))
-                {
-                    error("unknown status in Order " + oqorder.Symbol);
-                    return;
-                }
-                oqorder.StopPrice = (double)e.Order.AuxPrice; // stop order only
-                
-                if(!OrderTypeToOrderType(e.Order.OrderType, out oqorder.Type))
-                {
-                    error("bad order type in Order " + oqorder.Symbol);
-                }              
-                oqorder.OrderId = e.OrderId.ToString();
-                // Fields
-                oqorder.AddCustomField("ContractId", e.Contract.ContractId.ToString());
-                oqorder.AddCustomField("Multiplier", e.Contract.Multiplier);
-                oqorder.AddCustomField("Account", e.Order.Account);
-                oqorder.AddCustomField("ClientId", e.Order.ClientId.ToString());
-                oqorder.AddCustomField("DiscretionaryAmt", e.Order.DiscretionaryAmt.ToString());
-                oqorder.AddCustomField("DisplaySize", e.Order.DisplaySize.ToString());
-                oqorder.AddCustomField("ETradeOnly", e.Order.ETradeOnly.ToString());
-                oqorder.AddCustomField("GoodAfterTime", e.Order.GoodAfterTime);
-                oqorder.AddCustomField("GoodTillDate", e.Order.GoodTillDate);
-                oqorder.AddCustomField("Hidden", e.Order.Hidden.ToString());
-                oqorder.AddCustomField("NbboPriceCap", e.Order.NbboPriceCap.ToString());                
-                if (!string.IsNullOrWhiteSpace(e.Order.OcaGroup))
-                {
-                    oqorder.AddCustomField("OcaGroup", e.Order.OcaGroup);
-                    oqorder.AddCustomField("OcaType", e.Order.OcaType.ToString());
-                }
-                oqorder.AddCustomField("OrderRef", e.Order.OrderRef);
-                oqorder.AddCustomField("Origin", e.Order.Origin.ToString());
-                oqorder.AddCustomField("OutsideRth", e.Order.OutsideRth.ToString());
-                oqorder.AddCustomField("OverridePercentageConstraints", e.Order.OverridePercentageConstraints.ToString());
-                oqorder.AddCustomField("ParentId", e.Order.ParentId.ToString());
-                oqorder.AddCustomField("PercentOffset", e.Order.PercentOffset.ToString());
-                oqorder.AddCustomField("PermId", e.Order.PermId.ToString());
-                oqorder.AddCustomField("ReferencePriceType", e.Order.ReferencePriceType.ToString());
-                oqorder.AddCustomField("Rule80A", e.Order.Rule80A.ToString());
-                //oqorder.AddCustomField("ScaleInitLevelSize", e.Order.ScaleInitLevelSize.ToString());
-                //oqorder.AddCustomField("ScalePriceIncrement", e.Order.ScalePriceIncrement.ToString());
-                //oqorder.AddCustomField("ScaleSubsLevelSize", e.Order.ScaleSubsLevelSize.ToString());
-                oqorder.AddCustomField("SettlingFirm", e.Order.SettlingFirm);
-                oqorder.AddCustomField("StartingPrice", e.Order.StartingPrice.ToString());
-                oqorder.AddCustomField("StockRangeLower", e.Order.StockRangeLower.ToString());
-                oqorder.AddCustomField("StockRangeUpper", e.Order.StockRangeUpper.ToString());
-                oqorder.AddCustomField("StockRefPrice", e.Order.StockRefPrice.ToString());
-                oqorder.AddCustomField("SweepToFill", e.Order.SweepToFill.ToString());
-                oqorder.AddCustomField("Tif", e.Order.Tif.ToString());
-                oqorder.AddCustomField("TrailStopPrice", e.Order.TrailStopPrice.ToString());
-                oqorder.AddCustomField("TriggerMethod", e.Order.TriggerMethod.ToString());
-                oqorder.AddCustomField("WhatIf", e.Order.WhatIf.ToString());
-
-                string key = oqorder.OrderId;
-
-                //if (pendingOrders.ContainsKey(key)) 
                 pendingOrders[key] = oqorder;
-
-                //pendingOrders.Add(key, oqorder);
             }
-
-            //reorder.OrderState = BrokerOrderState.Invalid;
-            //reorder.SubmittedDate = DateTime.Now
-            //    + TimeSpan.FromHours(settings.BarTimeStampCorrection);
-
-            ////info("OpenOrder: unknown order from TWS (added): id: " + e.OrderId
-            ////+ ", Status: " + e.OrderState.Status.ToString()
-            ////+ ", Shares: " + e.Order.TotalQuantity.ToString());           
-
-            //if (reorder.OrderState == BrokerOrderState.Filled
-            //    || reorder.OrderState == BrokerOrderState.PartiallyFilled
-            //    || reorder.OrderState == BrokerOrderState.Submitted)
-            //{
-            //    Console.WriteLine("Order " + e.OrderId + " known state -> IGNORED");
-            //    return;
-            //}
-
-            //string information = "received from TWS";
-
-            //switch (e.Order.Tif)
-            //{
-            //    case TimeInForce.Day:
-            //        reorder.GoodTillCanceled = false;
-            //        break;
-            //    default:
-            //    case TimeInForce.GoodTillCancel:
-            //        reorder.GoodTillCanceled = true;
-            //        break;
-            //}
-            //reorder.LimitPrice = (double)e.Order.LimitPrice;
-
-            //switch (e.OrderState.Status)
-            //{
-
-            //    case OrderStatus.Inactive: //  "Inactive":
-            //        // ignore
-            //        return;
-            //    case OrderStatus.PendingSubmit: //   "PendingSubmit":
-            //    case OrderStatus.PreSubmitted: //  "PreSubmitted":
-            //    case OrderStatus.Submitted: //  "Submitted":
-            //    case OrderStatus.ApiPending:
-            //        reorder.OrderState = BrokerOrderState.Submitted;
-            //        break;
-            //    case OrderStatus.Filled: // "Filled":
-            //        reorder.OrderState = BrokerOrderState.Filled;
-            //        break;
-            //    case OrderStatus.PartiallyFilled: // "PartiallyFilled":
-            //        reorder.OrderState = BrokerOrderState.PartiallyFilled;
-            //        break;
-            //    case OrderStatus.PendingCancel: // "PendingCancel":
-            //        reorder.OrderState = BrokerOrderState.PendingCancel;
-            //        break;
-            //    case OrderStatus.Canceled: //  "Cancelled":
-            //    case OrderStatus.ApiCancelled:
-            //        reorder.OrderState = BrokerOrderState.Cancelled;
-            //        break;
-            //    default:
-            //        error("unknown order state: " + e.OrderState.Status);
-            //        return;
-            //}
-
-            ////TODO Market on Open
-            //reorder.Shares = e.Order.TotalQuantity;
-            //reorder.StopPrice = (double)e.Order.LimitPrice; // if stop order
-            //// reorder.SubmittedDate
-            //// reorder.TrailingStop
-
-
-            //logger.AddLog(LoggerLevel.Information, "ibclient_OpenOrder: "
-            //    + " Order form from TWS: " + reorder.ToString());
-
-            //lock (private_lock)
-            //{
-            //    if (!openOrders.ContainsKey(e.OrderId.ToString()))
-            //        openOrders.Add(e.OrderId.ToString(), new SrOrder(reorder));
-            //    else openOrders[e.OrderId.ToString()].reorder = reorder;
-            //}
-
-            //// wait until RE is ready to receive Order Updates
-            //if (reConnected)
-            //{
-            //    SendOrderToRE(reorder, information);
-
-            //}
             tEnd("ibclient_OpenOrder()");
         }
 
@@ -1592,23 +1343,26 @@ DefaultValue(LogDestination.File)]
             tStart("ibclient_ConnectionClosed()");
             //Console.WriteLine("Stingray: Connection to TWS closed");
             logger.AddLog(LoggerLevel.Error, "ConnectionClosed()");
+            bool callDisconnect = false;
             lock (private_lock)
             {
                 _twsConnected = false;
-                try
-                {
-                    if (ibclient != null && ibclient.Connected)
-                        ibclient.Disconnect();
-                }
-                catch (Exception /*ex*/)
-                {
-                    // MessageBox.Show("ibclient_ConnectionClosed: Disconnect: " + ex.Message);
-                    ibclient = null;
-                }
-                ordersValid = false;
-                positionsValid = false;
-                
+                if (ibclient != null && ibclient.Connected) callDisconnect = true;
             }
+            try
+            {
+                    
+                    if(callDisconnect) ibclient.Disconnect();
+            }
+            catch (Exception /*ex*/)
+            {
+                // MessageBox.Show("ibclient_ConnectionClosed: Disconnect: " + ex.Message);
+                ibclient = null;
+            }
+            ibclient = null;
+            ordersValid = false;
+            positionsValid = false;
+                           
             _isConnected = false;
             EmitDisconnected();
             tEnd("ibclient_ConnectionClosed()");
@@ -1626,45 +1380,39 @@ DefaultValue(LogDestination.File)]
             tEnd("ibclient_NextValidId()");
         }
 
-	    void ibclient_Error(object sender, Krs.Ats.IBNet96.ErrorEventArgs e)
+        void ibclient_Error(object sender, Krs.Ats.IBNet96.ErrorEventArgs e)
         {
-            tStart("ibclient_Error() " + e.ErrorMsg);
+            try
+            {
+                ibclient_Error2(sender, e);
+            }
+            catch (Exception ex)
+            {
+                error("ibclient_Error: Exception: " + ex.Message);
+            }
+        }
+
+	    void ibclient_Error2(object sender, Krs.Ats.IBNet96.ErrorEventArgs e)
+        {
+            tStart("ibclient_Error() Ticker=" + e.TickerId.ToString() + ": " + e.ErrorMsg);
             string orderId = e.TickerId.ToString();
 
             switch ((int)e.ErrorCode)
             {
                 case 135: // "Can't find Order"
-                    // cancel this order in OQ
                     logger.AddLog(LoggerLevel.Information, "Order " + e.TickerId.ToString()
                         + " not known in TWS, cancel in OQ: "
                         + e.ErrorMsg);
                    
-                    CancelOQOrder(orderId, e.ErrorMsg);
-
-                    //lock (private_lock)
-                    //{
-                    //    // find matching order
-                    //    if (openOrders.ContainsKey(orderId))
-                    //    {
-                    //        oqorder = openOrders[orderId].oqorder;
-                    //        //oqorder.OrderState = BrokerOrderState.Cancelled;
-                    //    }
-                    //}
-                    //string information = "Error from TWS: " + e.ErrorMsg;
-                    //// CancelREOrder(reorder, information);
-                    //lock (private_lock)
-                    //{
-                    //    if (openOrders.ContainsKey(orderId))
-                    //    {
-                    //        openOrders.Remove(orderId);
-                    //    }
-                    //}
+                    OnOrderError(orderId, e.ErrorMsg);
                     break;
                 case 202: // Order Cancelled
+                    logger.AddLog(LoggerLevel.Detail, "ibclient_Error: " + e.ErrorMsg);
                     if (e.ErrorMsg.EndsWith("Canceled - reason:"))
                     {
-                        logger.AddLog(LoggerLevel.Detail, "TWS Error: " + e.ErrorMsg);
-                        CancelOQOrder(orderId, e.ErrorMsg);
+                        
+                        // IB sends also an OrderStatus: Canceled
+                        // OnOrderCanceled(orderId);
                         return;
                     }
                     break;
@@ -1700,7 +1448,7 @@ DefaultValue(LogDestination.File)]
                 default:
                     if(workingOrders.ContainsKey(orderId))
                     {                        
-                        CancelOQOrder(orderId, e.ErrorMsg);
+                        OnOrderError(orderId, e.ErrorMsg);
                     }
                     break;
             }
@@ -1739,6 +1487,224 @@ DefaultValue(LogDestination.File)]
             tEnd("ibclient_CurrentTime()");
         }
         #endregion
+
+        #region Order State Transitions
+        /// <summary>
+        /// IB accepted this order
+        /// </summary>
+        /// <param name="orderID">order ID</param>
+        private void OnOrderAccepted(string orderId)
+        {
+            lock (private_lock)
+            {
+                // find matching order
+                if (!workingOrders.ContainsKey(orderId))
+                {
+                    info("ibclient_OrderStatus: unknown order: " + orderId.ToString());
+                    return;
+                }
+            }
+
+            SrOrderInfo sroi;
+            OQ.Order oqorder;
+            bool isReplaced;
+
+            lock (private_lock)
+            {
+                sroi = workingOrders[orderId];
+                oqorder = sroi.oqorder;
+                isReplaced = false;
+                 if (workingOrders[orderId].state == SrOrderInfoState.ReplaceCancel
+                    || workingOrders[orderId].state == SrOrderInfoState.ReplaceNew)
+                {
+                    isReplaced = true;
+                }
+            }
+
+            if (isReplaced)
+            {
+                EmitReplaced(oqorder);
+            }
+            else
+            {
+                EmitAccepted(oqorder);
+                lock (private_lock)
+                {
+                    sroi.state = SrOrderInfoState.Execution;
+                    // update internal lists                    
+                    if (pendingOrders.ContainsKey(orderId)) pendingOrders[orderId].Status = OpenQuant.API.OrderStatus.New;                    
+                }
+            }
+        }
+
+        /// <summary>
+        /// IB sent a fill report
+        /// </summary>
+        /// <param name="orderId">order ID</param>
+        /// <param name="filled">number of shares already filled on this order. Sum of all partial fills</param>
+        /// <param name="remaining">number of shares still outstanding</param>
+        /// <param name="lastFillPrice">price of last fill</param>
+        /// <param name="completely_filled">true if broker says the order is completely filled. Removes order from internal list</param>
+        private void OnOrderFilled(string orderId, int filled, int remaining, double lastFillPrice, bool completely_filled = false)
+        {
+            lock (private_lock)
+            {
+                // find matching order
+                if (!workingOrders.ContainsKey(orderId))
+                {
+                    info("ibclient_OrderStatus: unknown order: " + orderId.ToString());
+                    return;
+                }
+            }
+
+            OQ.Order oqorder;
+            SrOrderInfo sroi;
+            lock (private_lock)
+            {
+                sroi = workingOrders[orderId];
+                oqorder = sroi.oqorder;
+            }
+            ReportFill(oqorder, filled, remaining, lastFillPrice);
+
+            // remove from internal lists if completely filled
+            // Todo: check qty of previous orders in Replace sequence
+            if (sroi.state == SrOrderInfoState.Execution && completely_filled) // complete fill, order completed
+            {
+                lock (private_lock)
+                {
+                    // keep in pendingOrders, its marked as filled
+                    // remove from internal list  workingOrders                  
+                    if (workingOrders.ContainsKey(orderId)) workingOrders.Remove(orderId);
+                    if (pendingOrders.ContainsKey(orderId)) pendingOrders[orderId].Status = OpenQuant.API.OrderStatus.Filled;                    
+                }
+            }
+        }
+
+        private void OnOrderPendingCancel(string orderId)
+        {
+            lock (private_lock)
+            {
+                // find matching order
+                if (!workingOrders.ContainsKey(orderId))
+                {
+                    info("ibclient_OrderStatus: unknown order: " + orderId.ToString());
+                    return;
+                }
+            }
+
+            SrOrderInfo sroi;
+            OQ.Order oqorder;
+            bool isReplaced;
+
+            lock (private_lock)
+            {
+                sroi = workingOrders[orderId];
+                oqorder = sroi.oqorder;
+                isReplaced = false;
+                if (workingOrders[orderId].state == SrOrderInfoState.ReplaceCancel
+                   || workingOrders[orderId].state == SrOrderInfoState.ReplaceNew)
+                {
+                    isReplaced = true;
+                }
+            }
+            if (!isReplaced)
+            {
+                EmitPendingCancel(oqorder);
+                if (pendingOrders.ContainsKey(orderId)) pendingOrders[orderId].Status = OpenQuant.API.OrderStatus.PendingCancel;    
+            }
+        }
+
+	    private void OnOrderCanceled(string orderId)
+        {
+            lock (private_lock)
+            {
+                if (pendingOrders.ContainsKey(orderId)) pendingOrders[orderId].Status = OpenQuant.API.OrderStatus.Cancelled;
+            }
+
+            SrOrderInfo sroi;
+            OQ.Order oqorder;
+            bool isReplaced;
+	        SrOrderInfoState sroiState;
+
+            lock (private_lock)
+            {
+                if (!workingOrders.ContainsKey(orderId))
+                {
+                    info("ibclient_OrderStatus: unknown order: " + orderId.ToString());
+                    return;
+                }
+                sroi = workingOrders[orderId];
+                sroiState = sroi.state;
+                oqorder = sroi.oqorder;
+            }
+            switch(sroiState)
+            {
+                case SrOrderInfoState.ReplaceCancel:
+                    // next state in Replace: Cancel / Send
+                    DoReplaceSend(orderId);
+                    return;
+                case SrOrderInfoState.ReplaceNew:
+                    EmitCancelled(oqorder);
+                    break;
+                case SrOrderInfoState.Execution:
+                case SrOrderInfoState.New:
+                    EmitCancelled(oqorder);
+                    break;
+
+            }
+            // update internal lists
+            lock(private_lock)
+            {
+                if(workingOrders.ContainsKey(orderId)) workingOrders.Remove(orderId); // completed
+            }
+        }
+
+	    private void OnOrderError(string orderId, string message)
+	    {
+            lock (private_lock)
+            {
+                if (pendingOrders.ContainsKey(orderId))
+                {
+                    // pendingOrders[orderId].Text = message;
+                    pendingOrders[orderId].Status = OpenQuant.API.OrderStatus.Rejected;
+                }
+            }
+
+            tStart("OnOrderError, message=" + message);
+            SrOrderInfo sroi;
+            OQ.Order oqorder;
+            bool isReplaced;
+
+            lock (private_lock)
+            {
+                if (!workingOrders.ContainsKey(orderId))
+                {
+                    info("ibclient_OrderStatus: unknown order: " + orderId.ToString());
+                    return;
+                }
+                sroi = workingOrders[orderId];
+                oqorder = sroi.oqorder;
+                isReplaced = false;
+                if (workingOrders[orderId].state == SrOrderInfoState.ReplaceCancel
+                   || workingOrders[orderId].state == SrOrderInfoState.ReplaceNew)
+                {
+                    isReplaced = true;
+                }
+            }
+
+            if (isReplaced)
+            {
+                EmitReplaceReject(oqorder, OQ.OrderStatus.Rejected, message);
+                // ?? EmitCancelled
+            }
+            else
+            {
+                oqorder.Text = message;
+                EmitRejected(oqorder, message);
+            }
+            tEnd("OnOrderError");
+        }
+	    #endregion
 
         #region Converters
         // These converters convert OQ enums to IB enums and back
@@ -2043,38 +2009,48 @@ DefaultValue(LogDestination.File)]
         #endregion
 
         #region private methods
-        private void CancelOQOrder(string orderId, string errorMsg)
+        private void DoReplaceSend(string orderId)
         {
-            tStart("CancelOQOrder: err=" + errorMsg);
+            // old order is cancelled, no longer active
+            SrOrderInfo sroi = workingOrders[orderId];
+            OQ.Order oqorder = sroi.oqorder;
+            double cumQty = sroi.cumQty + oqorder.CumQty;
+            double newQty = sroi.newQty;
+           
 
-            lock (private_lock)
+            // 2. Send Modified Order          
+            int qty = (int)Math.Round(newQty - cumQty);
+            // check if newQty is still possible
+            if (qty < 0)
             {
-                if (!workingOrders.ContainsKey(orderId))
-                {
-                    error("CancelOQOrder: no working order with Id " + orderId + " found");
-                    return;
-                }
-                OQ.Order oqorder = workingOrders[orderId];
-                string text = errorMsg + ": " + oqorder.Text;
-
-                oqorder.Text = text;
-                // EmitCancelled(oqorder);
-                EmitRejected(oqorder, text);
+                EmitReplaceReject(oqorder, OQ.OrderStatus.Rejected, "can't change quantity below number of already filled shares");
+                return;
             }
-            tEnd("CancelOQOrder");
+            if (qty == 0) // already filled, we're done
+            {
+                EmitReplaced(oqorder);
+                // EmitFill ??
+                return;
+            }
+            string oldID = oqorder.OrderID; // this is the old OrderID
+            // 2. Send modified Order
+            Send2(oqorder, qty, sroi.newPrice, sroi.newStopPrice); // assigns new OrderId
+            info("Order Replaced: old ID=" + oldID + " -> new ID=" + oqorder.OrderID);
+            sroi.state = SrOrderInfoState.ReplaceNew;
+            sroi.cumQty = cumQty;
+            workingOrders[oqorder.OrderID] = sroi; // this is the new OrderID
+            // workingOrders.Remove(oldID);
         }
 
+     
         private void ReportFill(OQ.Order oqorder, int filled, int remaining, double lastFillPrice)
         {
-            OrderStatusEventArgs e;
-            string orderId;
-
-            info("ReportFill: Order vor Fill " + oqorder.Instrument.Symbol
-                 + " Id=" + oqorder.OrderID
-                 + ", CumQty=" + oqorder.CumQty
-                 + ", Qty=" + oqorder.Qty
-                 + ", LastQty=" + oqorder.LastQty
-                 + ", LeavesQty=" + oqorder.LeavesQty);
+            //info("ReportFill: Order vor Fill " + oqorder.Instrument.Symbol
+            //     + " Id=" + oqorder.OrderID
+            //     + ", CumQty=" + oqorder.CumQty
+            //     + ", Qty=" + oqorder.Qty
+            //     + ", LastQty=" + oqorder.LastQty
+            //     + ", LeavesQty=" + oqorder.LeavesQty);
             // in order the current fill state is stored:
             //  oqorder.Qty: overall/planne order size. does not change with fills
             //  oqorder.CumQty: sum of all fills, increases with every fill after EmitFill: oqorder.CumQty == e.Filled
@@ -2104,12 +2080,12 @@ DefaultValue(LogDestination.File)]
                       + ": after fill: IB.Remaining(" + remaining + ") != OQ.LeavesQty(" + oqorder.LeavesQty + ")");
             }
 
-            info("ReportFill: Order nach Fill fillqty=" + fillqty + "  " + oqorder.Instrument.Symbol
-                 + " Id=" + oqorder.OrderID
-                 + ", CumQty=" + oqorder.CumQty
-                 + ", Qty=" + oqorder.Qty
-                 + ", LastQty=" + oqorder.LastQty
-                 + ", LeavesQty=" + oqorder.LeavesQty);
+            //info("ReportFill: Order nach Fill fillqty=" + fillqty + "  " + oqorder.Instrument.Symbol
+            //     + " Id=" + oqorder.OrderID
+            //     + ", CumQty=" + oqorder.CumQty
+            //     + ", Qty=" + oqorder.Qty
+            //     + ", LastQty=" + oqorder.LastQty
+            //     + ", LeavesQty=" + oqorder.LeavesQty);
         }
  
         private void checkOpenOrders()
@@ -2185,11 +2161,13 @@ DefaultValue(LogDestination.File)]
         #endregion
 
         #region Diagnostics
+        /// <summary>
+        /// Read version string from Assembly Properties as set in AssemblyInfo.cs
+        /// </summary>
+        /// <returns></returns>
         private string Version()
-        {
-            string rev = svnRevision.Replace("$", "");
-            return Assembly.GetExecutingAssembly().GetName().Version.ToString()
-                + " " + rev;
+        {            
+            return Assembly.GetExecutingAssembly().GetName().Version.ToString();
         }
 
         private void InitLogger()

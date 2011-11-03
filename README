@@ -10,10 +10,12 @@ Interactive Brokers (IB) is a big Broker.
 StingrayOQ is an execution provider plugin which connects OpenQuant and Interactive Brokers.
 
 StingrayOQ is a replacement for the native IB plugin which comes with OQ.
-It has these features:
+Some features:
 
 * full support for FA accounts
-* allows Orders and executions be i´dentified with an unique OrderRef. this allows for a robust synchronisation even afetr crashes.
+* detects automatically if TWS is connected to a single account or FA account
+* allows Orders and executions be identified with an unique OrderRef. this allows for a robust synchronisation even after crashes.
+* writes log files
 
 
 I started this project because I needed a robust plugin for several accounts (within an FAstructure) at IB.
@@ -23,8 +25,8 @@ Using StingrayOQ
 ================
 To use StingrayOQ you need just two files:
 
-StingrayOQ.dll
-Krs.Ats.IBNet96.dll
+./StingraqOQ/bin/StingrayOQ.dll
+./StingraqOQ/bin/Krs.Ats.IBNet96.dll
 
 copy these files into the OpenQuant bin folder (typically C:\Program Files\SmartQuant Ltd\OpenQuant\Bin)
 
