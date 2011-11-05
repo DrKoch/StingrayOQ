@@ -40,6 +40,7 @@
     </Reference>
     <Reference Include="System" />
     <Reference Include="System.Core" />
+    <Reference Include="System.Drawing" />
     <Reference Include="System.Windows.Forms" />
     <Reference Include="System.Xml.Linq" />
     <Reference Include="System.Data.DataSetExtensions" />
@@ -48,7 +49,16 @@
     <Reference Include="System.Xml" />
   </ItemGroup>
   <ItemGroup>
+    <Compile Include="AccountEditorControl.cs">
+      <SubType>UserControl</SubType>
+    </Compile>
+    <Compile Include="AccountEditorControl.Designer.cs">
+      <DependentUpon>AccountEditorControl.cs</DependentUpon>
+    </Compile>
+    <Compile Include="AccountSettings.cs" />
+    <Compile Include="AccountEditor.cs" />
     <Compile Include="ExecutionInfo.cs" />
+    <Compile Include="Helpers.cs" />
     <Compile Include="Logger.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
     <Compile Include="SrBrokerOrder.cs" />
@@ -56,6 +66,11 @@
     <Compile Include="SrOrder.cs" />
     <Compile Include="SrOrderInfo.cs" />
     <Compile Include="StingrayOQ.cs" />
+  </ItemGroup>
+  <ItemGroup>
+    <EmbeddedResource Include="AccountEditorControl.resx">
+      <DependentUpon>AccountEditorControl.cs</DependentUpon>
+    </EmbeddedResource>
   </ItemGroup>
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
   <PropertyGroup>

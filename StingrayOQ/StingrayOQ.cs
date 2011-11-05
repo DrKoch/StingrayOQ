@@ -18,6 +18,9 @@ using System.IO;
 using System.Reflection;
 using System.Threading;
 using System.Windows; // Timer
+using System.Windows.Forms; // MessageBox
+
+
 using Krs.Ats.IBNet96; // Krs.Ats.IBNet96; // IBClient
 using OpenQuant.API;
 
@@ -75,7 +78,9 @@ namespace finantic.OQPlugins
         // internal state
         private Dictionary<string, SrOrderInfo> workingOrders;
 
-        
+        // Account Settings
+        private AccountSettings _accountSettings;
+
         // end threadsave Monitor -------------------------------------------------
 
         // OpenQuant State
@@ -93,7 +98,7 @@ namespace finantic.OQPlugins
 
         #region constructor
         public StingrayOQ()
-		{
+        {
 			base.name        = "StingrayOQ";
 			base.description = "finantic's Execution Provider for Interactive Brokers";
 			base.id          = 129; // Byte
@@ -112,12 +117,35 @@ namespace finantic.OQPlugins
 			pendingOrders = new Dictionary<string, SrBrokerOrder>();
 			workingOrders = new Dictionary<string, SrOrderInfo>();
 
+            // Account Settings
+            _accountSettings = new AccountSettings();
+            _accountSettings.Load();
+
             watchdog.Tick += new EventHandler(watchdog_Tick);
             watchdog.Interval = 1000;
 		}
         #endregion
 
         #region Settings
+        /// In Registry key
+        ///    HKEY_CURRENT_USER\Software\SmartQuant Ltd\OpenQuant\QUANTAPP
+        /// is the path to the xml filr for settings:
+        /// Settings are persisted to an xml File
+        /// like C:\Users\<username></username>\AppData\Roaming\SmartQuant Ltd\OpenQuant\
+        ///         Framework\ini\provider.properties.xml
+        /// public Properties of a Provider derived from UserProvider are persisted in a single string:
+        /// <provider name="StingrayOQ">
+        ///     <properties>
+        ///       <property name="PropertiesStr" type="System.String, mscorlib">
+        ///          ClientId=4262;Hostname=127.0.0.1;Port=7496;FAAccounts=;AutoTransmit=True;OutsideRTH=False;
+        ///          FAMethod=None;LogDestination=File;LoggerLevel=Detail
+        ///       </property>
+        ///     </properties>
+        ///     ....
+        /// This means that a property's string representation can't include semicolons or xml reserved chars:
+        /// "; < >"
+
+
         // Status
         private bool _twsConnected = false;
 
@@ -134,7 +162,7 @@ namespace finantic.OQPlugins
         // Information
         [Category("Information"),
         DisplayName("Version"),
-        Description("Status String Test"),
+        Description("Version of execution provider plugin"),
         ReadOnly(true)]
         public string StingrayOQVersion
         {
@@ -199,16 +227,6 @@ namespace finantic.OQPlugins
 	        set { _port = value; }
 	    }
 
-	    private string faAccounts = "";
-        [Category("TWS"),
-Description("Financial Advisor Accounts. Comma separated list of accounts"),
-DefaultValue("")]
-        public string FAAccounts
-        {
-            get { return faAccounts; }
-            set { faAccounts = value; }
-        }
-
         // Order Defaults
 	    private bool _autoTransmit = true;
 
@@ -231,8 +249,27 @@ DefaultValue(false)]
 	        set { _outsideRth = value; }
 	    }
 
+        // Accounts
+        // info for all accounts
 
-        // Settings
+	    [Category("Settings - Accounts"),
+            Description("Account Settings. Active state, Memo."),
+        Editor(typeof(AccountEditor), typeof(System.Drawing.Design.UITypeEditor)),
+        RefreshProperties(RefreshProperties.Repaint),
+            DefaultValue("")]
+	    public AccountSettings Accounts
+	    {
+            get
+            {
+               // MessageBox.Show("AccountSettings.get " + _accountSettings.RawValue);
+                return _accountSettings;
+            }
+            set
+            {
+            }
+	    }
+
+        // FA Settings
 	    private FinancialAdvisorAllocationMethod _faMethod = FinancialAdvisorAllocationMethod.None;
 	    [Category("Order Defaults - FA Allocation"),
 Description("Financial advisor allocation method"),
@@ -307,6 +344,7 @@ DefaultValue(LogDestination.File)]
             logger.LoggerLevel = this.LoggerLevel;
             logger.LogDestination = this.LogDestination;
             tStart("Initialize()");
+
             string version = Version();
 		    string text = "=== StingrayOQ V " + version + " started ===";            
 		    info(text);
@@ -643,6 +681,7 @@ DefaultValue(LogDestination.File)]
             {
                 foreach (string acctName in activeAccounts.Keys)
                 {
+                    if (!Accounts.IsActive(acctName)) continue; // skip inactive accounts
                     brokerInfo.AddAccount(acctName);
                     numAccounts++;
 
@@ -719,7 +758,7 @@ DefaultValue(LogDestination.File)]
                 }
             }
             info("BrokerInfo: " 
-                + numAccounts + " Accounts, "
+                + numAccounts + " active accounts, "
                 + numOpenPositions + " Positions, "
                 + numPendingOrders + " Orders");
 		    return brokerInfo;
@@ -933,6 +972,20 @@ DefaultValue(LogDestination.File)]
             }
         }
 
+        private void SetAccountDetails(string accountName, string key, string currency, string value)
+        {
+            DataRow row = accountDetails.Rows.Find(new string[] {accountName, key, currency});
+            if (row == null)
+            {
+                row = accountDetails.NewRow();
+                row["Account"] = accountName;
+                row["Key"] = key;
+                row["Currency"] = currency;
+                accountDetails.Rows.Add(row);
+            }
+            row["Value"] = value;
+        }
+
 	    void ibclient_UpdateAccountValue2(object sender, UpdateAccountValueEventArgs e)
         {
 
@@ -948,16 +1001,8 @@ DefaultValue(LogDestination.File)]
                 {
                     activeAccounts.Add(e.AccountName, 0.0);               
                 }
-                DataRow row = accountDetails.Rows.Find(new string[] { e.AccountName, e.Key, currency });
-                if (row == null)
-                {
-                    row = accountDetails.NewRow();
-                    row["Account"] = e.AccountName;
-                    row["Key"] = e.Key;
-                    row["Currency"] = currency;
-                    accountDetails.Rows.Add(row);
-                }
-                row["Value"] = e.Value;
+                SetAccountDetails(e.AccountName, e.Key, currency, e.Value);
+
             }
             return;
 
@@ -1060,12 +1105,15 @@ DefaultValue(LogDestination.File)]
             lock (private_lock)
             {
                 positionsValid = true;
+                // Account Settings
+                foreach (string acct in activeAccounts.Keys)
+                {
+                    _accountSettings.AddAccountIf(acct);
+                    // Add AccountMemo to account Details
+                    string memo = Accounts.GetMemo(acct);
+                    SetAccountDetails(acct, "AccountMemo", "", memo);
+                }
             }
-
-            // activeAccounts
-
-            // stop account subscription
-            // ibclient.RequestAccountUpdates(false, e.AccountName);
             tEnd("ibclient_AccountDownloadEnd");
         }
 
@@ -1348,6 +1396,7 @@ DefaultValue(LogDestination.File)]
             {
                 _twsConnected = false;
                 if (ibclient != null && ibclient.Connected) callDisconnect = true;
+                Accounts.Disconnect();
             }
             try
             {
