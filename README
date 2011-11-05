@@ -16,6 +16,10 @@ Some features:
 * detects automatically if TWS is connected to a single account or FA account
 * allows Orders and executions be identified with an unique OrderRef. this allows for a robust synchronisation even after crashes.
 * writes log files
+* may support *all* order attributes
+* makes all detail information of *all* FA accounts accessible from OQ.
+* allows implementation of true muti-account strategies in OQ
+
 
 
 I started this project because I needed a robust plugin for several accounts (within an FAstructure) at IB.
