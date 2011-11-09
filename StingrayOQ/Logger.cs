@@ -79,6 +79,17 @@ namespace finantic.OQPlugins
         /// <summary>
         /// Empty Constructor
         /// </summary>
+        
+        public Logger()
+        {
+            m_eventLogName = "Logger";
+            m_source = "Logger";
+        }
+
+
+        /// 
+        /// 
+        /// 
         public Logger(string source, string Name)
         {
             //MessageBox.Show("Start Logger " + source + ", Name: " + Name);
@@ -86,7 +97,7 @@ namespace finantic.OQPlugins
             m_source = source;
         }
 
-        public void AddLog(LoggerLevel level, string message)
+        public virtual void AddLog(LoggerLevel level, string message)
         {
             AddLog(level, message, 0);
         }

@@ -29,8 +29,8 @@ Using StingrayOQ
 ================
 To use StingrayOQ you need just two files:
 
-./StingraqOQ/bin/StingrayOQ.dll
-./StingraqOQ/bin/Krs.Ats.IBNet96.dll
+./StingraqOQ/bin/Debug/StingrayOQ.dll
+./StingraqOQ/bin/Debug/Krs.Ats.IBNet96.dll
 
 copy these files into the OpenQuant bin folder (typically C:\Program Files\SmartQuant Ltd\OpenQuant\Bin)
 

@@ -3,8 +3,6 @@ Microsoft Visual Studio Solution File, Format Version 11.00
 # Visual Studio 2010
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "StingrayOQ", "StingrayOQ\StingrayOQ.csproj", "{AEBDBA5B-6718-4545-BD96-FBE3641E425A}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MTest.StingrayOQ", "MTest.StingrayOQ\MTest.StingrayOQ.csproj", "{BBFBB73C-70E5-4436-ABFA-1CE9685BCEE7}"
-EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Solution Items", "Solution Items", "{74349307-C1F1-4EA9-A8F7-6E28516F2894}"
 	ProjectSection(SolutionItems) = preProject
 		Local.testsettings = Local.testsettings
@@ -13,6 +11,8 @@ Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Solution Items", "Solution 
 	EndProjectSection
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Mockups", "Mockups\Mockups.csproj", "{AC206CED-A94D-4F85-9058-06BBF88E9C59}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MTest.StingrayOQ5", "MTest.StingrayOQ5\MTest.StingrayOQ5.csproj", "{C6C6FD2B-CFF1-45C2-B753-AEEF217A4BD9}"
 EndProject
 Global
 	GlobalSection(TestCaseManagementSettings) = postSolution
@@ -27,14 +27,14 @@ Global
 		{AEBDBA5B-6718-4545-BD96-FBE3641E425A}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{AEBDBA5B-6718-4545-BD96-FBE3641E425A}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{AEBDBA5B-6718-4545-BD96-FBE3641E425A}.Release|Any CPU.Build.0 = Release|Any CPU
-		{BBFBB73C-70E5-4436-ABFA-1CE9685BCEE7}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
-		{BBFBB73C-70E5-4436-ABFA-1CE9685BCEE7}.Debug|Any CPU.Build.0 = Debug|Any CPU
-		{BBFBB73C-70E5-4436-ABFA-1CE9685BCEE7}.Release|Any CPU.ActiveCfg = Release|Any CPU
-		{BBFBB73C-70E5-4436-ABFA-1CE9685BCEE7}.Release|Any CPU.Build.0 = Release|Any CPU
 		{AC206CED-A94D-4F85-9058-06BBF88E9C59}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
 		{AC206CED-A94D-4F85-9058-06BBF88E9C59}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{AC206CED-A94D-4F85-9058-06BBF88E9C59}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{AC206CED-A94D-4F85-9058-06BBF88E9C59}.Release|Any CPU.Build.0 = Release|Any CPU
+		{C6C6FD2B-CFF1-45C2-B753-AEEF217A4BD9}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{C6C6FD2B-CFF1-45C2-B753-AEEF217A4BD9}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{C6C6FD2B-CFF1-45C2-B753-AEEF217A4BD9}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{C6C6FD2B-CFF1-45C2-B753-AEEF217A4BD9}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

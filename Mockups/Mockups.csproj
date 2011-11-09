@@ -5,11 +5,11 @@
     <Platform Condition=" '$(Platform)' == '' ">AnyCPU</Platform>
     <ProductVersion>8.0.30703</ProductVersion>
     <SchemaVersion>2.0</SchemaVersion>
-    <ProjectGuid>{AEBDBA5B-6718-4545-BD96-FBE3641E425A}</ProjectGuid>
+    <ProjectGuid>{AC206CED-A94D-4F85-9058-06BBF88E9C59}</ProjectGuid>
     <OutputType>Library</OutputType>
     <AppDesignerFolder>Properties</AppDesignerFolder>
-    <RootNamespace>finantic.OQPlugins</RootNamespace>
-    <AssemblyName>StingrayOQ</AssemblyName>
+    <RootNamespace>Mockups</RootNamespace>
+    <AssemblyName>Mockups</AssemblyName>
     <TargetFrameworkVersion>v4.0</TargetFrameworkVersion>
     <FileAlignment>512</FileAlignment>
   </PropertyGroup>
@@ -31,12 +31,8 @@
     <WarningLevel>4</WarningLevel>
   </PropertyGroup>
   <ItemGroup>
-    <Reference Include="Krs.Ats.IBNet96, Version=9.6.3.13, Culture=neutral, processorArchitecture=MSIL">
-      <SpecificVersion>False</SpecificVersion>
+    <Reference Include="Krs.Ats.IBNet96">
       <HintPath>..\krs.ats.ibnet\krsatsibnet-96313\Krs.Ats.IBNet\bin\Debug\Krs.Ats.IBNet96.dll</HintPath>
-    </Reference>
-    <Reference Include="OpenQuant.API">
-      <HintPath>C:\Program Files\SmartQuant Ltd\OpenQuant\Bin\OpenQuant.API.dll</HintPath>
     </Reference>
     <Reference Include="System" />
     <Reference Include="System.Core" />
@@ -49,35 +45,57 @@
     <Reference Include="System.Xml" />
   </ItemGroup>
   <ItemGroup>
-    <Compile Include="AccountEditorControl.cs">
+    <Compile Include="..\StingrayOQ\AccountEditor.cs">
+      <Link>AccountEditor.cs</Link>
+    </Compile>
+    <Compile Include="..\StingrayOQ\AccountEditorControl.cs">
+      <Link>AccountEditorControl.cs</Link>
       <SubType>UserControl</SubType>
     </Compile>
-    <Compile Include="AccountEditorControl.Designer.cs">
+    <Compile Include="..\StingrayOQ\AccountEditorControl.designer.cs">
+      <Link>AccountEditorControl.designer.cs</Link>
       <DependentUpon>AccountEditorControl.cs</DependentUpon>
     </Compile>
-    <Compile Include="AccountSettings.cs" />
-    <Compile Include="AccountEditor.cs" />
-    <Compile Include="ExecutionInfo.cs" />
-    <Compile Include="Factory.cs" />
-    <Compile Include="Helpers.cs" />
-    <Compile Include="Logger.cs" />
+    <Compile Include="..\StingrayOQ\AccountSettings.cs">
+      <Link>AccountSettings.cs</Link>
+    </Compile>
+    <Compile Include="..\StingrayOQ\ExecutionInfo.cs">
+      <Link>ExecutionInfo.cs</Link>
+    </Compile>
+    <Compile Include="..\StingrayOQ\Helpers.cs">
+      <Link>Helpers.cs</Link>
+    </Compile>
+    <Compile Include="..\StingrayOQ\Logger.cs">
+      <Link>Logger.cs</Link>
+    </Compile>
+    <Compile Include="..\StingrayOQ\SrBrokerOrder.cs">
+      <Link>SrBrokerOrder.cs</Link>
+    </Compile>
+    <Compile Include="..\StingrayOQ\SrBrokerPosition.cs">
+      <Link>SrBrokerPosition.cs</Link>
+    </Compile>
+    <Compile Include="..\StingrayOQ\SrOrder.cs">
+      <Link>SrOrder.cs</Link>
+    </Compile>
+    <Compile Include="..\StingrayOQ\SrOrderInfo.cs">
+      <Link>SrOrderInfo.cs</Link>
+    </Compile>
+    <Compile Include="..\StingrayOQ\StingrayOQ.cs">
+      <Link>StingrayOQ.cs</Link>
+    </Compile>
+    <Compile Include="Mock.Factory.cs" />
+    <Compile Include="Mock.Openquant.API.cs" />
+    <Compile Include="Mock.UserProvider.cs" />
+    <Compile Include="Mock.UserProviderWrapper.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
-    <Compile Include="SrBrokerOrder.cs" />
-    <Compile Include="SrBrokerPosition.cs" />
-    <Compile Include="SrOrder.cs" />
-    <Compile Include="SrOrderInfo.cs" />
-    <Compile Include="StingrayOQ.cs" />
   </ItemGroup>
   <ItemGroup>
-    <EmbeddedResource Include="AccountEditorControl.resx">
+    <EmbeddedResource Include="..\StingrayOQ\AccountEditorControl.resx">
+      <Link>AccountEditorControl.resx</Link>
       <DependentUpon>AccountEditorControl.cs</DependentUpon>
     </EmbeddedResource>
   </ItemGroup>
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
-  <PropertyGroup>
-    <PostBuildEvent>copy "$(TargetDir)$(TargetName).*" "C:\Program Files\SmartQuant Ltd\OpenQuant\Bin"
-</PostBuildEvent>
-  </PropertyGroup>
   <!-- To modify your build process, add your task inside one of the targets below and uncomment it. 
        Other similar extension points exist, see Microsoft.Common.targets.
   <Target Name="BeforeBuild">

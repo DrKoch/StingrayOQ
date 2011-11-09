@@ -145,7 +145,6 @@ namespace finantic.OQPlugins
         /// This means that a property's string representation can't include semicolons or xml reserved chars:
         /// "; < >"
 
-
         // Status
         private bool _twsConnected = false;
 
@@ -308,7 +307,7 @@ DefaultValue(LogDestination.File)]
             set { logDest = value; }
         }
 
-        private LoggerLevel pluginLogLevel = LoggerLevel.Detail;
+        private LoggerLevel pluginLogLevel = LoggerLevel.Error;
 	    [Category("Misc"),
 	     Description("Specifies how detailed the log entries are\r\n"
 	                 + "System: least detailed\r\n"
@@ -354,9 +353,9 @@ DefaultValue(LogDestination.File)]
 
 		protected override void Disconnect()
 		{
-            if (!IsConnected) return; // already dsiconnected
+            if (!IsConnected) return; // already disconnected
 			
-            tStart("Disonnect()");
+            tStart("Disconnect()");
             if (ibclient != null && ibclient.Connected)
             {
                 ibclient.Disconnect(); // request disconnect
@@ -367,49 +366,12 @@ DefaultValue(LogDestination.File)]
                 _isConnected = false;
                 EmitDisconnected();
             }
-            tEnd("Disonnect()");
+            tEnd("Disconnect()");
 		}
 
-		protected override void Shutdown()
-		{
-			Disconnect();
-		}
-
-
-		#endregion
-
-		#region Subscribe/Unsubscribe
-
-        //protected override void Subscribe(Instrument instrument)
+        //protected override void Shutdown()
         //{
-        //    if (!IsConnected)
-        //    {
-        //        EmitError("Not connected.");
-
-        //        return;
-        //    }
-
-        //    if (!subscribedInstruments.ContainsKey(instrument.Symbol))
-        //    {
-        //        subscribedInstruments.Add(instrument.Symbol, instrument);
-
-        //    }
-        //}
-
-        //protected override void Unsubscribe(Instrument instrument)
-        //{
-        //    if (!IsConnected)
-        //    {
-        //        EmitError("Not connected.");
-
-        //        return;
-        //    }
-
-        //    if (subscribedInstruments.ContainsKey(instrument.Symbol))
-        //    {
-
-        //        subscribedInstruments.Remove(instrument.Symbol);
-        //    }
+        //    Disconnect();
         //}
 
 
@@ -455,7 +417,7 @@ DefaultValue(LogDestination.File)]
 	        // Order Attributes
 	        iborder.Account = order.Account;
 	        IB.ActionSide ibaction;
-	        if (!OrderSideToActionSide(order.Side, out ibaction)) // Buy / Sell
+            if (!Helpers.OrderSideToActionSide(order.Side, out ibaction)) // Buy / Sell
 	        {
 	            error("unknown order side in Order " + order.Instrument.Symbol);
 	            return;
@@ -475,7 +437,7 @@ DefaultValue(LogDestination.File)]
 	        }
 	        else
 	        {
-                if (!OQFAMethodTOIBFAMethod(order.IB.FaMethod, out faMethod))
+                if (!Helpers.OQFAMethodTOIBFAMethod(order.IB.FaMethod, out faMethod))
                 {
                     error("bad FA allocation method in order " + order.Instrument.Symbol);
                 }
@@ -484,7 +446,7 @@ DefaultValue(LogDestination.File)]
 	            iborder.FAPercentage = order.IB.FaPercentage.ToString();
 	            iborder.FAProfile = order.IB.FaProfile;
 	            OQ.IBFaMethod oqfamethod;
-                if (!FAAllocationMethodTOIBFAMethod(iborder.FAMethod, out oqfamethod))
+                if (!Helpers.FAAllocationMethodTOIBFAMethod(iborder.FAMethod, out oqfamethod))
                 {
                     error("unknown FA allocation method in settings");
                 }
@@ -504,7 +466,7 @@ DefaultValue(LogDestination.File)]
             // = order.IB.DisplaySize;
 		    iborder.OcaGroup = order.OCAGroup;
  		    IB.OrderType ibtype;
-            if(!OQOrderTypeToIBOrderType(order.Type, out ibtype))
+            if (!Helpers.OQOrderTypeToIBOrderType(order.Type, out ibtype))
             {
                 error("bad order type in order " + order.Instrument.Symbol);
                 return;
@@ -524,7 +486,7 @@ DefaultValue(LogDestination.File)]
             // iborder.StockRefPrice
             // iborder.SweepToFill
 	        IB.TimeInForce ibtif;
-            if (!OQTimeInForceToIBTimeInForce(order.TimeInForce, out ibtif))
+            if (!Helpers.OQTimeInForceToIBTimeInForce(order.TimeInForce, out ibtif))
             {
                 error("unknown time in force in order " + order.Instrument.Symbol);
                 return;
@@ -553,7 +515,7 @@ DefaultValue(LogDestination.File)]
             // contract.Right
             // contract.SecId
 		    IB.SecurityType secType;
-            if (!InstrumentTypeToSecurityType(order.Instrument.Type, out secType))
+            if (!Helpers.InstrumentTypeToSecurityType(order.Instrument.Type, out secType))
             {
                 error("bad instrument type in order " + order.Instrument.Symbol);
             }
@@ -595,12 +557,14 @@ DefaultValue(LogDestination.File)]
                 + ", Aux price=" + iborder.AuxPrice.ToString()
                 + ")");
 
-            ibclient.PlaceOrder(iborder.OrderId, contract, iborder);
             // Set Infos back to OQ.Order
             order.OrderID = iborder.OrderId.ToString();
             order.ClientID = iborder.ClientId.ToString();
             // Remember active orders
 	        workingOrders[iborder.OrderId.ToString()] = new SrOrderInfo(order);
+
+            // finally send to broker
+            ibclient.PlaceOrder(iborder.OrderId, contract, iborder);
 		}
 
 		protected override void Cancel(OQ.Order order)
@@ -813,8 +777,9 @@ DefaultValue(LogDestination.File)]
             {
                 _twsConnected = false;
                 logger.AddLog(LoggerLevel.Detail, "new IBClient");
-
-                ibclient = new IBClient();
+                // use factory to enable unit tests
+                // ibclient = new IBClient();
+                ibclient = Factory.GetIbClient();
                 // DEBUG
                 ibclient.ThrowExceptions = true;
                 ibclient.Error += ibclient_Error;
@@ -1235,7 +1200,7 @@ DefaultValue(LogDestination.File)]
             brokerPos.Symbol = symbol;
             brokerPos.Currency = e.Contract.Currency;
             brokerPos.Exchange = e.Contract.PrimaryExchange;
-            if(!SecurityTypeToInstrumentType(e.Contract.SecurityType, out brokerPos.InstrumentType))
+            if (!Helpers.SecurityTypeToInstrumentType(e.Contract.SecurityType, out brokerPos.InstrumentType))
             {
                 error("bad security type in position " + symbol);
                 return;
@@ -1314,7 +1279,7 @@ DefaultValue(LogDestination.File)]
             oqorder.Symbol = e.Contract.Symbol;
             oqorder.Currency = e.Contract.Currency;
             oqorder.Exchange = e.Contract.Exchange;
-            if (!SecurityTypeToInstrumentType(e.Contract.SecurityType, out oqorder.InstrumentType))
+            if (!Helpers.SecurityTypeToInstrumentType(e.Contract.SecurityType, out oqorder.InstrumentType))
             {
                 error("unknown security type in Order " + oqorder.Symbol);
                 return;
@@ -1322,18 +1287,18 @@ DefaultValue(LogDestination.File)]
             oqorder.OrderId = e.OrderId.ToString();
             oqorder.Price = (double) e.Order.LimitPrice;
             oqorder.Qty = e.Order.TotalQuantity;
-            if (!ActionSideToOrderSide(e.Order.Action, out oqorder.Side))
+            if (!Helpers.ActionSideToOrderSide(e.Order.Action, out oqorder.Side))
             {
                 error("unknown action side in Order " + oqorder.Symbol);
             }
-            if(!OrderStateToOrderStatus(e.OrderState.Status, out oqorder.Status))
+            if (!Helpers.OrderStateToOrderStatus(e.OrderState.Status, out oqorder.Status))
             {
                 error("unknown status in Order " + oqorder.Symbol);
                 return;
             }
             oqorder.StopPrice = (double)e.Order.AuxPrice; // stop order only
-                
-            if(!OrderTypeToOrderType(e.Order.OrderType, out oqorder.Type))
+
+            if (!Helpers.OrderTypeToOrderType(e.Order.OrderType, out oqorder.Type))
             {
                 error("bad order type in Order " + oqorder.Symbol);
             }              
@@ -1398,16 +1363,17 @@ DefaultValue(LogDestination.File)]
                 if (ibclient != null && ibclient.Connected) callDisconnect = true;
                 Accounts.Disconnect();
             }
-            try
-            {
+            // if(callDisconnect)
+            //try
+            //{
                     
-                    if(callDisconnect) ibclient.Disconnect();
-            }
-            catch (Exception /*ex*/)
-            {
-                // MessageBox.Show("ibclient_ConnectionClosed: Disconnect: " + ex.Message);
-                ibclient = null;
-            }
+            //        if(callDisconnect) ibclient.Disconnect();
+            //}
+            //catch (Exception /*ex*/)
+            //{
+            //    // MessageBox.Show("ibclient_ConnectionClosed: Disconnect: " + ex.Message);
+            //    ibclient = null;
+            //}
             ibclient = null;
             ordersValid = false;
             positionsValid = false;
@@ -1544,6 +1510,7 @@ DefaultValue(LogDestination.File)]
         /// <param name="orderID">order ID</param>
         private void OnOrderAccepted(string orderId)
         {
+            tStart("OnOrderAccepted");
             lock (private_lock)
             {
                 // find matching order
@@ -1584,6 +1551,7 @@ DefaultValue(LogDestination.File)]
                     if (pendingOrders.ContainsKey(orderId)) pendingOrders[orderId].Status = OpenQuant.API.OrderStatus.New;                    
                 }
             }
+            tEnd("OnOrderAccepted");
         }
 
         /// <summary>
@@ -1596,6 +1564,7 @@ DefaultValue(LogDestination.File)]
         /// <param name="completely_filled">true if broker says the order is completely filled. Removes order from internal list</param>
         private void OnOrderFilled(string orderId, int filled, int remaining, double lastFillPrice, bool completely_filled = false)
         {
+            tStart("OnOrderFilled");
             lock (private_lock)
             {
                 // find matching order
@@ -1627,6 +1596,7 @@ DefaultValue(LogDestination.File)]
                     if (pendingOrders.ContainsKey(orderId)) pendingOrders[orderId].Status = OpenQuant.API.OrderStatus.Filled;                    
                 }
             }
+            tEnd("OnOrderFilled");
         }
 
         private void OnOrderPendingCancel(string orderId)
@@ -1664,7 +1634,8 @@ DefaultValue(LogDestination.File)]
         }
 
 	    private void OnOrderCanceled(string orderId)
-        {
+	    {
+            tStart("OnOrderCanceled");
             lock (private_lock)
             {
                 if (pendingOrders.ContainsKey(orderId)) pendingOrders[orderId].Status = OpenQuant.API.OrderStatus.Cancelled;
@@ -1706,6 +1677,7 @@ DefaultValue(LogDestination.File)]
             {
                 if(workingOrders.ContainsKey(orderId)) workingOrders.Remove(orderId); // completed
             }
+            tEnd("OnOrderCanceled");
         }
 
 	    private void OnOrderError(string orderId, string message)
@@ -1754,308 +1726,6 @@ DefaultValue(LogDestination.File)]
             tEnd("OnOrderError");
         }
 	    #endregion
-
-        #region Converters
-        // These converters convert OQ enums to IB enums and back
-        // all follow the same pattern
-        // if a conversion is not possible they return false.
-        // the caller is expected to create an error message and ignore
-        // the class containing the enum which is not convertible
-
-        public bool ActionSideToOrderSide(ActionSide action, out OrderSide side)
-        {
-            side = OrderSide.Buy;
-            switch (action)
-            {
-                case ActionSide.Buy:
-                    side = OrderSide.Buy;
-                    break;
-                case ActionSide.Sell:
-                    side = OrderSide.Sell;
-                    break;
-                case ActionSide.SShort:
-                    side = OrderSide.Sell;
-                    break;
-                case ActionSide.Undefined:
-                default:
-                    return false;
-            }
-            return true;
-        }
-
-        private bool OrderStateToOrderStatus(IB.OrderStatus ibstatus, out OQ.OrderStatus status)
-        {
-            status = OQ.OrderStatus.New;
-            switch (ibstatus)
-            {
-                case IB.OrderStatus.ApiCancelled:
-                case IB.OrderStatus.Canceled:
-                    status = OQ.OrderStatus.Cancelled;
-                    break;
-                case IB.OrderStatus.Inactive:
-                case IB.OrderStatus.ApiPending:
-                case IB.OrderStatus.PendingSubmit:
-                case IB.OrderStatus.PreSubmitted:
-                case IB.OrderStatus.Submitted:
-                    status = OQ.OrderStatus.PendingNew;
-                    break;
-                case IB.OrderStatus.Filled:
-                    status = OQ.OrderStatus.Filled;
-                    break;
-                case IB.OrderStatus.PartiallyFilled:
-                    status = OQ.OrderStatus.PartiallyFilled;
-                    break;
-                case IB.OrderStatus.PendingCancel:
-                    status = OQ.OrderStatus.PendingCancel;
-                    break;
-                default:
-                case IB.OrderStatus.Unknown:
-                    return false;
-            }
-            return true;
-        }
-
-        private bool OrderTypeToOrderType(IB.OrderType ibordertype, out OQ.OrderType oqordertype)
-        {
-            oqordertype = OQ.OrderType.Market;
-            switch (ibordertype)
-            {
-                case IB.OrderType.Limit:
-                case IB.OrderType.LimitOnClose:
-                    oqordertype = OQ.OrderType.Limit;
-                    break;
-                case IB.OrderType.Market:
-                    oqordertype = OQ.OrderType.Market;
-                    break;
-                case IB.OrderType.MarketOnClose:
-                    oqordertype = OQ.OrderType.MarketOnClose;
-                    break;
-                case IB.OrderType.Stop:
-                    oqordertype = OQ.OrderType.Stop;
-                    break;
-                case IB.OrderType.StopLimit:
-                    oqordertype = OQ.OrderType.StopLimit;
-                    break;
-                case IB.OrderType.TrailingStop:
-                    oqordertype = OQ.OrderType.Trail;
-                    break;
-                case IB.OrderType.TrailingStopLimit:
-                    oqordertype = OQ.OrderType.TrailLimit;
-                    break;
-                default:
-                case IB.OrderType.Volatility:
-                case IB.OrderType.VolumeWeightedAveragePrice:
-                case IB.OrderType.Scale:
-                case IB.OrderType.Relative:
-                case IB.OrderType.PeggedToMarket:
-                case IB.OrderType.Default:
-                case IB.OrderType.Empty:
-                    return false;
-            }
-            return true;
-        }
-
-        bool SecurityTypeToInstrumentType(SecurityType secType, out InstrumentType result)
-        {
-            result = InstrumentType.Stock; // default
-            switch (secType)
-            {
-                case SecurityType.Bond:
-                    result = InstrumentType.Bond;
-                    break;
-                case SecurityType.Cash:
-                    result = InstrumentType.FX;
-                    break;
-                case SecurityType.Future:
-                    result = InstrumentType.Futures;
-                    break;
-                case SecurityType.FutureOption:
-                case SecurityType.Index:
-                    result = InstrumentType.Index;
-                    break;
-                case SecurityType.Option:
-                    result = InstrumentType.FutOpt;
-                    break;
-                case SecurityType.Stock:
-                    result = InstrumentType.Stock;
-                    break;
-                case SecurityType.Bag:
-                case SecurityType.Undefined:
-                    return false;
-            }
-            return true;
-        }
-
-
-        private bool OrderSideToActionSide(OrderSide orderside, out ActionSide action)
-        {
-            action = ActionSide.Undefined;
-            switch (orderside)
-            {
-                case OrderSide.Buy:
-                    action = ActionSide.Buy;
-                    break;
-                case OrderSide.Sell:
-                    action = ActionSide.Sell;
-                    break;
-                default:
-                    return false;
-            }
-            return true;
-        }
-
-        private bool OQOrderTypeToIBOrderType(OQ.OrderType oqtype, out IB.OrderType ibtype)
-        {
-            ibtype = IB.OrderType.Empty;
-            switch (oqtype)
-            {
-                case OQ.OrderType.Limit:
-                    ibtype = IB.OrderType.Limit;
-                    break;
-                case OQ.OrderType.Market:
-                    ibtype = IB.OrderType.Market;
-                    break;
-                case OQ.OrderType.MarketOnClose:
-                    ibtype = IB.OrderType.MarketOnClose;
-                    break;
-                case OQ.OrderType.Stop:
-                    ibtype = IB.OrderType.Stop;
-                    break;
-                case OQ.OrderType.StopLimit:
-                    ibtype = IB.OrderType.StopLimit;
-                    break;
-                case OQ.OrderType.Trail:
-                    ibtype = IB.OrderType.TrailingStop;
-                    break;
-                case OQ.OrderType.TrailLimit:
-                    ibtype = IB.OrderType.TrailingStopLimit;
-                    break;
-                default:
-                    return false;
-            }
-            return true;
-        }
-
-        private bool OQTimeInForceToIBTimeInForce(OQ.TimeInForce oqtif, out IB.TimeInForce ibtif)
-        {
-            ibtif = IB.TimeInForce.Undefined;
-            switch (oqtif)
-            {
-
-                case OQ.TimeInForce.Day:
-                    ibtif = IB.TimeInForce.Day;
-                    break;
-                case OQ.TimeInForce.FOK:
-                    ibtif = IB.TimeInForce.FillOrKill;
-                    break;
-                case OQ.TimeInForce.GTC:
-                    ibtif = IB.TimeInForce.GoodTillCancel;
-                    break;
-                case OQ.TimeInForce.GTD:
-                    ibtif = IB.TimeInForce.GoodTillDate;
-                    break;
-                case OQ.TimeInForce.OPG:
-                    ibtif = IB.TimeInForce.MarketOnOpen;
-                    break;
-                case OQ.TimeInForce.ATC:
-                case OQ.TimeInForce.GFS:
-                case OQ.TimeInForce.GTX:
-                case OQ.TimeInForce.IOC:
-                default:
-                    return false;
-            }
-            return true;
-        }
-
-        private bool InstrumentTypeToSecurityType(OQ.InstrumentType instrType, out IB.SecurityType secType)
-        {
-            secType = SecurityType.Undefined;
-            switch (instrType)
-            {
-                case InstrumentType.Bond:
-                    secType = SecurityType.Bond;
-                    break;
-                case InstrumentType.ETF:
-                    secType = SecurityType.Stock;
-                    break;
-                case InstrumentType.FX:
-                    secType = SecurityType.Cash;
-                    break;
-                case InstrumentType.FutOpt:
-                    secType = SecurityType.FutureOption;
-                    break;
-                case InstrumentType.Futures:
-                    secType = SecurityType.Future;
-                    break;
-                case InstrumentType.Index:
-                    secType = SecurityType.Index;
-                    break;
-                case InstrumentType.Option:
-                    secType = SecurityType.Option;
-                    break;
-                case InstrumentType.Stock:
-                    secType = SecurityType.Stock;
-                    break;
-                case InstrumentType.MultiLeg:
-                default:
-                    return false;
-            }
-            return true;
-        }
-
-        private bool OQFAMethodTOIBFAMethod(OQ.IBFaMethod oqFaMethod,
-            out IB.FinancialAdvisorAllocationMethod ibFaMethod)
-        {
-            ibFaMethod = FinancialAdvisorAllocationMethod.None;
-            switch (oqFaMethod)
-            {
-                case IBFaMethod.AvailableEquity:
-                    ibFaMethod = FinancialAdvisorAllocationMethod.AvailableEquity;
-                    break;
-                case IBFaMethod.EqualQuantity:
-                    ibFaMethod = FinancialAdvisorAllocationMethod.EqualQuantity;
-                    break;
-                case IBFaMethod.NetLiq:
-                    ibFaMethod = FinancialAdvisorAllocationMethod.NetLiquidity;
-                    break;
-                case IBFaMethod.PctChange:
-                    ibFaMethod = FinancialAdvisorAllocationMethod.PercentChange;
-                    break;
-                case IBFaMethod.Undefined:
-                default:
-                    return false;
-            }
-            return true;
-        }
-
-
-        private bool FAAllocationMethodTOIBFAMethod(IB.FinancialAdvisorAllocationMethod ibFaMethod,
-            out OQ.IBFaMethod oqFaMethod)
-        {
-            oqFaMethod = IBFaMethod.Undefined;
-            switch (ibFaMethod)
-            {
-                case FinancialAdvisorAllocationMethod.AvailableEquity:
-                    oqFaMethod = IBFaMethod.AvailableEquity;
-                    break;
-                case FinancialAdvisorAllocationMethod.EqualQuantity:
-                    oqFaMethod = IBFaMethod.EqualQuantity;
-                    break;
-                case FinancialAdvisorAllocationMethod.NetLiquidity:
-                    oqFaMethod = IBFaMethod.NetLiq;
-                    break;
-                case FinancialAdvisorAllocationMethod.PercentChange:
-                    oqFaMethod = IBFaMethod.PctChange;
-                    break;
-                case FinancialAdvisorAllocationMethod.None:
-                default:
-                    return false;
-            }
-            return true;
-        }
-
-
-        #endregion
 
         #region private methods
         private void DoReplaceSend(string orderId)
@@ -2222,7 +1892,9 @@ DefaultValue(LogDestination.File)]
         private void InitLogger()
         {
             // Logger
-            logger = new Logger("StingrayOQ", "StingrayOQ");
+            // logger = new Logger("StingrayOQ", "StingrayOQ");
+            // use Factory to enable Unit Tests
+            logger = Factory.GetLogger("StingrayOQ", "StingrayOQ");
             string bp = AppDomain.CurrentDomain.BaseDirectory.ToString();
             string logfile = "StingrayOQ-"
                 + ClientId.ToString()
