@@ -81,15 +81,18 @@ namespace finantic.OQPlugins
         public void AddAccountIf(string acct)
         {
             DataRow row = accountInfoTable.Rows.Find(acct);
-            if (row == null)
+            if (row != null)
             {
-                row = accountInfoTable.NewRow(); // insert new row
-                accountInfoTable.Rows.Add(row);
-                row["Active"] = true;
-                row["Account"] = acct;
-                row["Memo"] = "";
+                row["Live"] = true;
+                return;
             }
-            row["Live"] = true;                      
+            // account unknown, create new account row
+            row = accountInfoTable.NewRow(); // insert new row             
+            row["Active"] = true;
+            row["Account"] = acct;
+            row["Memo"] = "";
+            row["Live"] = true;
+            accountInfoTable.Rows.Add(row);          
         }
 
         #region Load Save

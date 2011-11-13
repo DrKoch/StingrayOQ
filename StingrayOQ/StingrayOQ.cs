@@ -967,7 +967,6 @@ DefaultValue(LogDestination.File)]
                     activeAccounts.Add(e.AccountName, 0.0);               
                 }
                 SetAccountDetails(e.AccountName, e.Key, currency, e.Value);
-
             }
             return;
 
